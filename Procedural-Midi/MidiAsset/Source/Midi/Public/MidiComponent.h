@@ -2,86 +2,118 @@
 
 #pragma once
 
-#include "MidiFile.h"
-#include "Event/MidiEvent.h"
-#include "Util/MetronomeTick.h"
-#include "Util/MidiProcessor.h"
+#include "../MidiFile.h"
+#include "../Event/MidiEvent.h"
+#include "MetronomeTick.h"
+#include "MidiEventListener.h"
 
-#include "Components/ActorComponent.h"
-#include "MidiComponent.generated.h"
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEventStart, bool, beginning);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEventStop, bool, finished);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FEventMidi, int32, track,int32, note,int32, velocity,int32, elapsed);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEventDevice, TArray<uint8>, msg, int32, elapsed);
-
-/*
-* A component that gives an actor the ability to manipulate a midi asset or to create
-* their own asset
-*/
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), meta=(DisplayName = "MidiComponent") )
-class MIDI_API UMidiComponent : public UActorComponent, public MidiEventListener
+/**
+ * 
+ */
+class MIDI_API MidiProcessor
 {
-	GENERATED_BODY()
+	static const int PROCESS_RATE_MS = 8;
 
-public:	
-	// Sets default values for this component's properties
-	UMidiComponent();
-	~UMidiComponent();
-
-	// Called when the game starts
-	virtual void BeginPlay() override;
-	
-	// Called every frame
-	virtual void TickComponent( float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction ) override;
-	
-// MIDI
-	
-	// loads the Midi Asset Data
-	UFUNCTION(BlueprintCallable, Category = "Midi")
-	void LoadAsset(class UMidiAsset* MidiAsset);
-	
-	UFUNCTION(BlueprintCallable, Category = "Midi")
-	void LoadFile(FString path);
-
-// Other
-//-----------------------
-
-private:
 	MidiFile* mMidiFile;
-	MidiProcessor mProcessor;
+	bool mRunning;
+	double mTicksElapsed;
+	long mMsElapsed;
 
-	// Midi Event Listener
+	int mMPQN;
+	int mPPQ;
 
-	void onEvent(MidiEvent* _event);
-	void onStart(bool fromBeginning);
-	void onStop(bool finish);
+	MetronomeTick* mMetronome;
+	TimeSignature sig;
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "Midi")
+	MidiProcessor();
+	~MidiProcessor();
+
+	void load(MidiFile & file);
+
 	void start();
-	UFUNCTION(BlueprintCallable, Category = "Midi")
 	void stop();
-	UFUNCTION(BlueprintCallable, Category = "Midi")
 	void reset();
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Midi")
 	bool isStarted();
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Midi")
 	bool isRunning();
 
+	void setListener(MidiEventListener* listener);
+
+	void process();
+	void processTo(float elapsedTime);
+
 protected:
-	UPROPERTY(BlueprintAssignable, Category = "Midi")
-	FEventStart OnStart;
-	UPROPERTY(BlueprintAssignable, Category = "Midi")
-	FEventStop OnStop;
-	// Called when a Note On/Off is called
-	UPROPERTY(BlueprintAssignable, Category = "Midi")
-	FEventMidi OnEvent;
+	void dispatch(MidiEvent * _event);
 
-	//called when any ChannelEvent Midi Message is called
-	UPROPERTY(BlueprintAssignable, Category = "Midi")
-	FEventDevice OnSend;
+private:
+	TArray<TArray<MidiEvent*>::TIterator> mCurrEvents;
+	uint32 mLastMs;
+	uint32 mStartMs;
+	MidiEventListener* mListener;
 
+	double startTime;
+	double startTick;
 
+	class MidiTrackEventQueue
+	{
+	private:
+		MidiTrack* mTrack;
+		TArray<MidiEvent*>::TIterator mIterator;
+		TArray<MidiEvent*> mEventsToDispatch;
+		MidiEvent* mNext;
+
+	public:
+		MidiTrackEventQueue(MidiTrack* track): mIterator(track->getEvents().CreateIterator()), mNext(NULL)
+		{
+			mTrack = track;
+
+			if (mIterator)
+			{
+				mNext = *mIterator;
+			}
+		}
+
+		TArray<MidiEvent*>& getNextEventsUpToTick(double tick)
+		{
+			mEventsToDispatch.Empty();
+
+			while (mNext != NULL)
+			{
+
+				if (mNext->getTick() <= tick)
+				{
+					mEventsToDispatch.Add(mNext);
+
+					if (++mIterator)
+					{
+						mNext = *mIterator;
+					}
+					else
+					{
+						mNext = NULL;
+					}
+				}
+				else
+				{
+					break;
+				}
+			}
+
+			return mEventsToDispatch;
+		}
+
+		bool hasMoreEvents()
+		{
+			return mNext != NULL;
+		}
+
+		void Reset() {
+			mIterator.Reset();
+			if (mIterator)
+			{
+				mNext = *mIterator;
+			}
+		}
+	};
 };
