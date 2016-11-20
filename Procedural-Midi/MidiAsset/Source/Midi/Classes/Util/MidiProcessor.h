@@ -41,13 +41,19 @@ public:
 	void setListener(MidiEventListener* listener);
 
 	void process();
+	void processTo(float elapsedTime);
+
 protected:
 	void dispatch(MidiEvent * _event);
 
 private:
 	TArray<TArray<MidiEvent*>::TIterator> mCurrEvents;
 	uint32 mLastMs;
+	uint32 mStartMs;
 	MidiEventListener* mListener;
+
+	double startTime;
+	double startTick;
 
 	class MidiTrackEventQueue
 	{
