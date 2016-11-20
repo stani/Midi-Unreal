@@ -15,6 +15,9 @@ MidiProcessor::MidiProcessor() {
 	mRunning = false;
 	mTicksElapsed = 0;
 	mMsElapsed = 0;
+
+	startTime = 0.0;
+	startTick = 0;
 }
 
 MidiProcessor::~MidiProcessor()
@@ -50,9 +53,14 @@ void MidiProcessor::load(MidiFile & file) {
 void MidiProcessor::start() {
 	if (mRunning) return;
 	mLastMs = FPlatformTime::Cycles();
+	mStartMs = FPlatformTime::Cycles();
+
 	mRunning = true;
 
 	mListener->onStart(mMsElapsed == 0);
+
+	startTime = 0.0;
+	startTick = 0;
 }
 
 void MidiProcessor::stop() {
@@ -65,6 +73,10 @@ void MidiProcessor::reset() {
 	mRunning = false;
 	mTicksElapsed = 0;
 	mMsElapsed = 0;
+	mStartMs = 0;
+
+	startTime = 0.0;
+	startTick = 0;
 
 	if (mMetronome)
 		mMetronome->setTimeSignature(&sig);
@@ -91,7 +103,16 @@ void MidiProcessor::dispatch(MidiEvent * _event) {
 
 	// Tempo and Time Signature events are always needed by the processor
 	if (_event->getType() == (MetaEvent::TEMPO & 0XFF)) {
+		
+		
+		startTime = startTime + (((double)(_event->getTick() - startTick) * (double)mMPQN) / (double)mPPQ) / 1000000.0;
+		startTick = _event->getTick()*1.0;
+
 		mMPQN = (static_cast<Tempo*>(_event))->getMpqn();
+
+
+		UE_LOG(LogTemp, Warning, TEXT("Tempo changed to %d at tick %ld"), mMPQN, _event->getTick());
+
 	}
 
 	else if (_event->getType() == (MetaEvent::TIME_SIGNATURE & 0XFF)) {
@@ -128,14 +149,16 @@ void MidiProcessor::process() {
 	}
 
 	mLastMs = now;
-	mMsElapsed += msElapsed;
-	mTicksElapsed += ticksElapsed;
+	mMsElapsed = FPlatformTime::ToMilliseconds(now - mStartMs); //+= msElapsed;
+	mTicksElapsed = MidiUtil::msToTicks(mMsElapsed, mMPQN, mPPQ); ;// += ticksElapsed;
+
 
 	for (int i = 0; i < mCurrEvents.Num(); i++) {
 		while (mCurrEvents[i]) {
 			MidiEvent * _event = *mCurrEvents[i];
 			if (_event->getTick() <= mTicksElapsed) {
 				dispatch(_event);
+
 				mCurrEvents[i]++;
 			}
 			else
@@ -153,4 +176,35 @@ void MidiProcessor::process() {
 	mRunning = false;
 	mListener->onStop(true);
 
+}
+
+void MidiProcessor::processTo(float elapsedTime)
+{
+	if (!mRunning)
+		return;
+
+	mTicksElapsed = startTick + MidiUtil::msToTicks((long)((elapsedTime-startTime)*1000.0), mMPQN, mPPQ); ;
+
+	for (int i = 0; i < mCurrEvents.Num(); i++) {
+		while (mCurrEvents[i]) {
+			MidiEvent * _event = *mCurrEvents[i];
+			if (_event->getTick() <= mTicksElapsed) {
+				dispatch(_event);
+
+				mCurrEvents[i]++;
+			}
+			else
+				break;
+		}
+	}
+
+	for (int i = 0; i < mCurrEvents.Num(); i++) {
+		if (mCurrEvents[i])
+		{
+			return;
+		}
+	}
+
+	mRunning = false;
+	mListener->onStop(true);
 }
