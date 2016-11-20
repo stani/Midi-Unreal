@@ -306,48 +306,4 @@ int UMidiComponent::GetResolution()
 	}
 }
 
-int UMidiComponent::GetMPQN()
-{
-	if (mMidiFile)
-	{
-		int mMPQN = Tempo::DEFAULT_MPQN;
 
-		MidiTrack& trk = *mMidiFile->getTracks()[0];
-		TArray<MidiEvent*>::TIterator it = trk.getEvents().CreateIterator();
-
-		while (it)
-		{
-			MidiEvent* _event = *it;
-
-			//Tempo is supposed to come before everything
-			if (_event->getType() == MetaEvent::TEMPO)
-			{
-				Tempo* tempoEvent = (Tempo*)_event;
-				mMPQN = tempoEvent->getMpqn();
-
-			}
-			it++;
-		}
-		return mMPQN;
-	}
-	else
-	{
-		return 0;
-	}
-}
-
-
-float UMidiComponent::GetLength()
-{
-	if (mMidiFile)
-	{
-		long ticks = mMidiFile->getLengthInTicks();
-		float sec = (((double)ticks * (double)GetMPQN()) / (double)GetResolution()) / 1000000.0f;
-
-		return sec;
-	}
-	else
-	{
-		return 0;
-	}
-}
