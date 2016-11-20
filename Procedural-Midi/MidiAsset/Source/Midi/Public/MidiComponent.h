@@ -2,118 +2,142 @@
 
 #pragma once
 
-#include "../MidiFile.h"
-#include "../Event/MidiEvent.h"
-#include "MetronomeTick.h"
-#include "MidiEventListener.h"
+#include "MidiFile.h"
+#include "Event/MidiEvent.h"
+#include "Util/MetronomeTick.h"
+#include "Util/MidiProcessor.h"
 
-/**
- * 
- */
-class MIDI_API MidiProcessor
+#include "Components/ActorComponent.h"
+#include "MidiComponent.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEventStart, bool, beginning);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEventStop, bool, finished);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FEventMidi, int32, track,int32, note,int32, velocity,int32, elapsed);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEventDevice, TArray<uint8>, msg, int32, elapsed);
+
+USTRUCT(BlueprintType)
+struct FMidiNote
 {
-	static const int PROCESS_RATE_MS = 8;
+	GENERATED_USTRUCT_BODY()
 
-	MidiFile* mMidiFile;
-	bool mRunning;
-	double mTicksElapsed;
-	long mMsElapsed;
+		UPROPERTY(BlueprintReadWrite)
+		float Start;
 
-	int mMPQN;
-	int mPPQ;
+	UPROPERTY(BlueprintReadWrite)
+		float Length;
 
-	MetronomeTick* mMetronome;
-	TimeSignature sig;
+	UPROPERTY(BlueprintReadWrite)
+		int Value;
 
-public:
-	MidiProcessor();
-	~MidiProcessor();
+	UPROPERTY(BlueprintReadWrite)
+		int Channel;
 
-	void load(MidiFile & file);
+	FMidiNote()
+	{
+		Start = 0.0f;
+		Length = 0.0f;
+		Value = 0;
+		Channel = 0;
+	}
 
-	void start();
-	void stop();
-	void reset();
+	FMidiNote(float astart, int avalue, int achannel) :FMidiNote()
+	{
+		Start = astart;
+		Length = 0.0f;
+		Value = avalue;
+		Channel = achannel;
+	}
 
-	bool isStarted();
-	bool isRunning();
+	FORCEINLINE bool operator==(const FMidiNote &Other) const
+	{
+		return Channel == Other.Channel && Value == Other.Value;
+	}
 
-	void setListener(MidiEventListener* listener);
+	FORCEINLINE bool operator<(const FMidiNote &Other) const
+	{
+		return Start < Other.Start ||
+			(Start == Other.Start && (Channel<Other.Channel ||
+				(Channel == Other.Channel && (Value<Other.Value))));
+	}
 
-	void process();
-	void processTo(float elapsedTime);
+};
 
-protected:
-	void dispatch(MidiEvent * _event);
+/*
+* A component that gives an actor the ability to manipulate a midi asset or to create
+* their own asset
+*/
+UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), meta=(DisplayName = "MidiComponent") )
+class MIDI_API UMidiComponent : public UActorComponent, public MidiEventListener
+{
+	GENERATED_BODY()
+
+public:	
+	// Sets default values for this component's properties
+	UMidiComponent();
+	~UMidiComponent();
+
+	// Called when the game starts
+	virtual void BeginPlay() override;
+	
+	// Called every frame
+	virtual void TickComponent( float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction ) override;
+	
+// MIDI
+	
+	// loads the Midi Asset Data
+	UFUNCTION(BlueprintCallable, Category = "Midi")
+	void LoadAsset(class UMidiAsset* MidiAsset);
+	
+	UFUNCTION(BlueprintCallable, Category = "Midi")
+	void LoadFile(FString path);
+
+	UFUNCTION(BlueprintCallable, Category = "Midi")
+	void ProcessTo(float time);
+
+	UFUNCTION(BlueprintCallable, Category = "Midi")
+	void GetMidiNotes(TArray<FMidiNote>& notes);
+
+// Other
+//-----------------------
 
 private:
-	TArray<TArray<MidiEvent*>::TIterator> mCurrEvents;
-	uint32 mLastMs;
-	uint32 mStartMs;
-	MidiEventListener* mListener;
+	MidiFile* mMidiFile;
+	MidiProcessor mProcessor;
 
-	double startTime;
-	double startTick;
+	// Midi Event Listener
 
-	class MidiTrackEventQueue
-	{
-	private:
-		MidiTrack* mTrack;
-		TArray<MidiEvent*>::TIterator mIterator;
-		TArray<MidiEvent*> mEventsToDispatch;
-		MidiEvent* mNext;
+	void onEvent(MidiEvent* _event);
+	void onStart(bool fromBeginning);
+	void onStop(bool finish);
 
-	public:
-		MidiTrackEventQueue(MidiTrack* track): mIterator(track->getEvents().CreateIterator()), mNext(NULL)
-		{
-			mTrack = track;
+public:
+	UFUNCTION(BlueprintCallable, Category = "Midi")
+	void start();
+	UFUNCTION(BlueprintCallable, Category = "Midi")
+	void stop();
+	UFUNCTION(BlueprintCallable, Category = "Midi")
+	void reset();
 
-			if (mIterator)
-			{
-				mNext = *mIterator;
-			}
-		}
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Midi")
+	bool isStarted();
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Midi")
+	bool isRunning();
 
-		TArray<MidiEvent*>& getNextEventsUpToTick(double tick)
-		{
-			mEventsToDispatch.Empty();
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Midi")
+	int GetResolution();
 
-			while (mNext != NULL)
-			{
+protected:
+	UPROPERTY(BlueprintAssignable, Category = "Midi")
+	FEventStart OnStart;
+	UPROPERTY(BlueprintAssignable, Category = "Midi")
+	FEventStop OnStop;
+	// Called when a Note On/Off is called
+	UPROPERTY(BlueprintAssignable, Category = "Midi")
+	FEventMidi OnEvent;
 
-				if (mNext->getTick() <= tick)
-				{
-					mEventsToDispatch.Add(mNext);
+	//called when any ChannelEvent Midi Message is called
+	UPROPERTY(BlueprintAssignable, Category = "Midi")
+	FEventDevice OnSend;
 
-					if (++mIterator)
-					{
-						mNext = *mIterator;
-					}
-					else
-					{
-						mNext = NULL;
-					}
-				}
-				else
-				{
-					break;
-				}
-			}
 
-			return mEventsToDispatch;
-		}
-
-		bool hasMoreEvents()
-		{
-			return mNext != NULL;
-		}
-
-		void Reset() {
-			mIterator.Reset();
-			if (mIterator)
-			{
-				mNext = *mIterator;
-			}
-		}
-	};
 };
